@@ -79,3 +79,13 @@ docs/_build/
 docker-compose.yml
 *Dockerfile*
 config/
+ruff.toml
+wait-for-psql.py
+odoo.conf
+entrypoint.sh
+.isort.cfg
+.eslint.yml
+.devcontainer/
+.env.example
+.dockerignore
+.pylintrc
