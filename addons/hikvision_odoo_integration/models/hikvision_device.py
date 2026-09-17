@@ -20,14 +20,19 @@
 #
 ################################################################################
 import json
+import logging
 import time as time_module
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, date, time as dt_time
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
+
 import pytz
 import requests
-from requests.auth import HTTPDigestAuth
 from odoo import _, api, exceptions, fields, models
 from odoo.exceptions import UserError, ValidationError
+from requests.auth import HTTPDigestAuth
+
+_logger = logging.getLogger(__name__)
 
 
 class HikvisionDevice(models.Model):
@@ -334,6 +339,9 @@ class HikvisionDevice(models.Model):
             job = self.env.context.get('job')
             total_events = len(events)
 
+            import logging
+            _logger = logging.getLogger(__name__)
+
             for event in events:
                 processed_count += 1
                 if job:
@@ -341,28 +349,42 @@ class HikvisionDevice(models.Model):
                         job.set_progress(processed_count, total=total_events)
                     except Exception:
                         pass
+                        
+                _logger.warning(f"--- EVENTO DIARIO --- {event}")
+
                 emp_no = event.get("employeeNoString")
+                if not emp_no:
+                    emp_no = str(event.get("employeeNo", ""))
+                    
                 pass_time_str = event.get("time")
                 attendance_status = event.get("attendanceStatus")
+                inferred_status = False
 
-                if not emp_no or not pass_time_str or attendance_status is None:
+                if not emp_no or not pass_time_str:
+                    skipped_count += 1
                     continue
+
+                if attendance_status not in ['checkIn', 'checkOut']:
+                    attendance_status = "checkIn"
+                    inferred_status = True
 
                 employee = self.env["hr.employee"].search(
                     [("hikvision_number", "=", emp_no)], limit=1
                 )
                 if not employee:
+                    skipped_count += 1
                     continue
 
                 try:
-                    pass_time = datetime.strptime(pass_time_str, "%Y-%m-%dT%H:%M:%S%z")
+                    normalized = pass_time_str.replace('Z', '+00:00')
+                    pass_time = datetime.fromisoformat(normalized)
                     pass_time = pass_time.astimezone(pytz.UTC).replace(tzinfo=None)
-                except ValueError:
-                    continue
-
-                if pass_time < employee.create_date.replace(tzinfo=None):
-                    skipped_count += 1
-                    continue
+                except Exception:
+                    try:
+                        pass_time = datetime.strptime(pass_time_str[:19], '%Y-%m-%dT%H:%M:%S')
+                    except Exception:
+                        skipped_count += 1
+                        continue
 
                 if attendance_status == "checkIn":
                     same_day_attendance = self.env["hr.attendance"].search([
@@ -378,6 +400,9 @@ class HikvisionDevice(models.Model):
                     )
 
                     if same_day_attendance and not same_day_attendance.check_out:
+                        if inferred_status and pass_time > same_day_attendance.check_in:
+                            same_day_attendance.sudo().write({"check_out": pass_time})
+                            continue
                         skipped_count += 1
                         continue
 
@@ -389,6 +414,7 @@ class HikvisionDevice(models.Model):
                             })
                             continue
                         else:
+                            skipped_count += 1
                             continue
 
                     user_tz = self.env.user.tz or "UTC"
@@ -401,7 +427,6 @@ class HikvisionDevice(models.Model):
                         end_of_day_utc = end_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
 
                         last_attendance.sudo().write({"check_out": end_of_day_utc})
-                        self.env.invalidate_all()
 
                     if last_attendance and not last_attendance.check_out and pass_time > last_attendance.check_in:
                         safe_checkout = pass_time - timedelta(seconds=1)
@@ -446,7 +471,7 @@ class HikvisionDevice(models.Model):
                             "check_out": pass_time + timedelta(seconds=1),
                         })
 
-            return "Attendance download completed successfully"
+            return f"Attendance download completed successfully. Processed {processed_count}, Skipped {skipped_count} events"
 
         except Exception as e:
             raise e
@@ -462,7 +487,7 @@ class HikvisionDevice(models.Model):
             events = device.fetch_all_attendance()
 
             device.fetch_employees()
-            self.env.cr.commit()
+            # self.env.cr.commit()
 
             employees = self.env["hr.employee"].search([("hikvision_number", "!=", False)])
 
@@ -482,7 +507,15 @@ class HikvisionDevice(models.Model):
 
                 for event in chunk_events:
                     processed_count += 1
+                    
+                    import logging
+                    _logger = logging.getLogger(__name__)
+                    _logger.warning(f"--- EVENTO GLOBAL --- {event}")
+
                     emp_no = event.get("employeeNoString")
+                    if not emp_no:
+                        emp_no = str(event.get("employeeNo", ""))
+                        
                     pass_time_str = event.get("time")
                     attendance_status = event.get("attendanceStatus")
                     inferred_status = False
@@ -491,14 +524,9 @@ class HikvisionDevice(models.Model):
                         chunk_skipped += 1
                         continue
 
-                    if attendance_status is None:
-                        minor = event.get("minor")
-                        if minor in [75, 38, 181]:
-                            attendance_status = "checkIn"
-                            inferred_status = True
-                        else:
-                            chunk_skipped += 1
-                            continue
+                    if attendance_status not in ['checkIn', 'checkOut']:
+                        attendance_status = "checkIn"
+                        inferred_status = True
 
                     employee = self.env["hr.employee"].search(
                         [("hikvision_number", "=", emp_no)], limit=1
@@ -508,15 +536,23 @@ class HikvisionDevice(models.Model):
                         continue
 
                     try:
-                        pass_time = datetime.strptime(pass_time_str, "%Y-%m-%dT%H:%M:%S%z")
+                        normalized = pass_time_str.replace('Z', '+00:00')
+                        pass_time = datetime.fromisoformat(normalized)
                         pass_time = pass_time.astimezone(pytz.UTC).replace(tzinfo=None)
-                    except ValueError:
-                        chunk_skipped += 1
-                        continue
+                    except Exception:
+                        try:
+                            pass_time = datetime.strptime(pass_time_str[:19], '%Y-%m-%dT%H:%M:%S')
+                        except Exception:
+                            chunk_skipped += 1
+                            continue
 
-                    if pass_time < employee.create_date.replace(tzinfo=None):
-                        chunk_skipped += 1
-                        continue
+                    #  Esta restricción lo que hace es evitar crear el registro si el empleado
+                    #  en Odoo fue creado después de darle a la huella en el biométrico.
+                    #  No supe si quitarla o no, queda aquí por si acaso
+
+                    # if pass_time < employee.create_date.replace(tzinfo=None):
+                    #     chunk_skipped += 1
+                    #     continue
 
                     existing_attendance = self.env["hr.attendance"].search([
                         ("employee_id", "=", employee.id),
@@ -627,11 +663,11 @@ class HikvisionDevice(models.Model):
                 updated_count += chunk_updated
                 skipped_count += chunk_skipped
 
-                try:
-                    self.env.cr.commit()
-                except Exception:
-                    self.env.cr.rollback()
-                    continue
+                # try:
+                #     self.env.cr.commit()
+                # except Exception:
+                #     self.env.cr.rollback()
+                #     continue
 
                 job = self.env.context.get('job')
                 if job:
@@ -649,10 +685,10 @@ class HikvisionDevice(models.Model):
             return f"All attendance download completed successfully. Processed {processed_count} events, Created {created_count} records, Updated {updated_count} records, Skipped {skipped_count} events"
 
         except Exception as e:
-            try:
-                self.env.cr.rollback()
-            except:
-                pass
+            # try:
+            #     self.env.cr.rollback()
+            # except:
+            #     pass
             raise e
 
     def fetch_employees(self):
@@ -690,7 +726,7 @@ class HikvisionDevice(models.Model):
                                 "hikvision_number": emp_no
                             })
                             fetched_emp_ids.append(new_emp.id)
-                    self.env.cr.commit()
+                    # self.env.cr.commit()
                     return {
                         "type": "ir.actions.act_window",
                         "name": _("Fetched Employees"),
@@ -782,9 +818,10 @@ class HikvisionDevice(models.Model):
         local_time_str = now.strftime(f"%Y-%m-%dT%H:%M:%S{sign}{tz_hours}:{tz_minutes}")
 
         xml_payload = f"""<?xml version="1.0" encoding="UTF-8"?>
-    <Time xmlns="http://www.hikvision.com/ver10/XMLSchema">
+    <Time xmlns="http://www.isapi.org/ver20/XMLSchema">
         <timeMode>manual</timeMode>
         <localTime>{local_time_str}</localTime>
+        <timeZone>GMT{sign}{tz_hours}:{tz_minutes}:00</timeZone>
     </Time>
     """
 
@@ -809,7 +846,7 @@ class HikvisionDevice(models.Model):
                 }
             }
         else:
-            raise UserError(_("Please Check the Connection"))
+            raise UserError(f"Error {response.status_code}: {response.text}")
 
     def _get_next_hikvision_employee_no(self):
         """Get next available employee number."""
@@ -862,7 +899,7 @@ class HikvisionDevice(models.Model):
         new_employee_no = self._get_next_hikvision_employee_no()
 
         employee.hikvision_number = new_employee_no
-        self.env.cr.commit()
+        # self.env.cr.commit()
 
         url, auth, headers = self._get_api_config("/ISAPI/AccessControl/UserInfo/Record?format=json")
 
@@ -898,7 +935,7 @@ class HikvisionDevice(models.Model):
             }
         else:
             employee.hikvision_number = False
-            self.env.cr.commit()
+            # self.env.cr.commit()
             raise UserError(_("Failed to create user: %s") % response.text)
 
     def update_hikvision_user(self, employee):
@@ -965,7 +1002,7 @@ class HikvisionDevice(models.Model):
 
         if response.status_code in (200, 201):
             employee.active = False
-            self.env.cr.commit()
+            # self.env.cr.commit()
             return {
                 'type': 'ir.actions.client',
                 'tag': 'display_notification',
