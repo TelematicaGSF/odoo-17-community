@@ -203,13 +203,14 @@ class HikvisionDevice(models.Model):
 
                 time_module.sleep(0.5)
 
-            except Exception:
-                continue
-
-            current_date = chunk_end
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Fallo al descargar bloque de {current_date}: {e}")
+            
+            current_date: datetime = chunk_end
 
         return all_events
-
+    
     def _fetch_attendance_chunk(self, start_date, end_date):
         """Fetch attendance for a date range chunk."""
         url, auth, headers = self._get_api_config("/ISAPI/AccessControl/AcsEvent?format=json")
@@ -218,7 +219,7 @@ class HikvisionDevice(models.Model):
             "AcsEventCond": {
                 "searchID": "1",
                 "searchResultPosition": 0,
-                "maxResults": 100,
+                "maxResults": 30,
                 "major": 5,
                 "minor": 0,
                 "startTime": start_date.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -229,6 +230,7 @@ class HikvisionDevice(models.Model):
         chunk_events = []
         position = 0
         total_matches = None
+        retries = 0
 
         while True:
             payload_template["AcsEventCond"]["searchResultPosition"] = position
@@ -261,25 +263,23 @@ class HikvisionDevice(models.Model):
 
                 chunk_events.extend(events)
 
-                if len(events) < payload_template["AcsEventCond"]["maxResults"]:
+                position += len(events)
+
+                if total_matches and position >= total_matches:
                     break
+                
+                retries = 0
 
-                position += payload_template["AcsEventCond"]["maxResults"]
-
-                if total_matches and len(chunk_events) >= total_matches:
-                    break
-
-            except requests.exceptions.ConnectionError as e:
-                raise exceptions.UserError(f"Failed to connect to the device at {self.ip_address}: {str(e)}")
-            except requests.exceptions.HTTPError as e:
-                raise exceptions.UserError(f"HTTP error occurred: {str(e)}")
-            except requests.exceptions.Timeout as e:
-                raise exceptions.UserError(f"Request timed out: {str(e)}")
             except requests.exceptions.RequestException as e:
-                raise exceptions.UserError(f"Error communicating with the device: {str(e)}")
+                retries += 1
+                if retries > 3:
+                    import logging
+                    logging.getLogger(__name__).warning(f"Se omite la página tras 3 intentos fallidos: {e}")
+                    break
+                time_module.sleep(1)
 
         return chunk_events
-
+    
     def fetch_and_create_attendance(self):
         """Queue job to download and create attendance records."""
         self.ensure_one()
@@ -382,97 +382,51 @@ class HikvisionDevice(models.Model):
                     except Exception:
                         skipped_count += 1
                         continue
+                        
+                existing_attendance = self.env["hr.attendance"].search([
+                    ("employee_id", "=", employee.id),
+                    "|",
+                    ("check_in", "=", pass_time),
+                    ("check_out", "=", pass_time)
+                ], limit=1)
 
-                if attendance_status == "checkIn":
-                    same_day_attendance = self.env["hr.attendance"].search([
-                        ("employee_id", "=", employee.id),
-                        ("check_in", ">=", pass_time.replace(hour=0, minute=0, second=0, microsecond=0)),
-                        ("check_in", "<=", pass_time.replace(hour=23, minute=59, second=59, microsecond=999999)),
-                    ], order="check_in desc", limit=1)
+                if existing_attendance:
+                    skipped_count += 1
+                    continue
 
-                    last_attendance = self.env["hr.attendance"].search(
-                        [("employee_id", "=", employee.id)],
-                        order="check_in desc",
-                        limit=1,
-                    )
+                last_attendance = self.env["hr.attendance"].search(
+                    [("employee_id", "=", employee.id)],
+                    order="check_in desc",
+                    limit=1,
+                )
 
-                    if same_day_attendance and not same_day_attendance.check_out:
-                        if inferred_status and pass_time > same_day_attendance.check_in:
-                            same_day_attendance.sudo().write({"check_out": pass_time})
-                            continue
-                        skipped_count += 1
-                        continue
-
-                    if same_day_attendance and same_day_attendance.check_out:
-                        if pass_time > same_day_attendance.check_out:
-                            self.env["hr.attendance"].sudo().create({
-                                "employee_id": employee.id,
-                                "check_in": pass_time,
-                            })
-                            continue
-                        else:
-                            skipped_count += 1
-                            continue
-
-                    user_tz = self.env.user.tz or "UTC"
-                    local_tz = pytz.timezone(user_tz)
-
-                    if last_attendance and not last_attendance.check_out:
-                        checkin_date_local = last_attendance.check_in.astimezone(local_tz).date()
-                        end_of_day_local = datetime.combine(checkin_date_local, dt_time(23, 59, 59))
-                        end_of_day_local = local_tz.localize(end_of_day_local)
-                        end_of_day_utc = end_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
-
-                        last_attendance.sudo().write({"check_out": end_of_day_utc})
-
-                    if last_attendance and not last_attendance.check_out and pass_time > last_attendance.check_in:
-                        safe_checkout = pass_time - timedelta(seconds=1)
-                        last_attendance.sudo().write({"check_out": safe_checkout})
-
-                    try:
-                        self.env["hr.attendance"].sudo().create({
-                            "employee_id": employee.id,
-                            "check_in": pass_time,
-                        })
-                    except ValidationError:
-                        open_att = self.env["hr.attendance"].search([
-                            ("employee_id", "=", employee.id),
-                            ("check_out", "=", False)
-                        ], order="check_in desc", limit=1)
-                        if open_att and pass_time > open_att.check_in:
-                            open_att.sudo().write({"check_out": pass_time - timedelta(seconds=1)})
-                            self.env["hr.attendance"].sudo().create({
-                                "employee_id": employee.id,
-                                "check_in": pass_time,
-                            })
-                        else:
-                            raise
-
-                elif attendance_status == "checkOut":
-                    last_attendance = self.env["hr.attendance"].search([
-                        ("employee_id", "=", employee.id),
-                    ], order="check_in desc", limit=1)
-
-                    if last_attendance:
-                        if not last_attendance.check_out:
-                            if pass_time > last_attendance.check_in:
-                                last_attendance.sudo().write({"check_out": pass_time})
-                            else:
-                                skipped_count += 1
-                        else:
+                if last_attendance and not last_attendance.check_out:
+                    if pass_time > last_attendance.check_in:
+                        try:
+                            last_attendance.sudo().write({"check_out": pass_time})
+                        except Exception as e:
+                            _logger.warning(f"Omitido por conflicto al cerrar turno: {e}")
                             skipped_count += 1
                     else:
-                        self.env["hr.attendance"].sudo().create({
-                            "employee_id": employee.id,
-                            "check_in": pass_time,
-                            "check_out": pass_time + timedelta(seconds=1),
-                        })
+                        skipped_count += 1
+                else:
+                    if last_attendance and pass_time <= (last_attendance.check_out or last_attendance.check_in):
+                        skipped_count += 1
+                    else:
+                        try:
+                            self.env["hr.attendance"].sudo().create({
+                                "employee_id": employee.id,
+                                "check_in": pass_time,
+                            })
+                        except Exception as e:
+                            _logger.warning(f"Omitido por conflicto al crear entrada: {e}")
+                            skipped_count += 1
 
             return f"Attendance download completed successfully. Processed {processed_count}, Skipped {skipped_count} events"
 
         except Exception as e:
             raise e
-
+            
     def job_download_all_attendance(self, device_id):
         """Job to download all attendance records."""
         device = self.env['hikvision.device'].browse(device_id)
@@ -560,122 +514,40 @@ class HikvisionDevice(models.Model):
                         chunk_skipped += 1
                         continue
 
-                    if attendance_status == "checkIn":
-                        same_day_attendance = self.env["hr.attendance"].search([
-                            ("employee_id", "=", employee.id),
-                            ("check_in", ">=", pass_time.replace(hour=0, minute=0, second=0, microsecond=0)),
-                            ("check_in", "<=", pass_time.replace(hour=23, minute=59, second=59, microsecond=999999)),
-                        ], order="check_in desc", limit=1)
+                    last_attendance = self.env["hr.attendance"].search(
+                        [("employee_id", "=", employee.id)],
+                        order="check_in desc",
+                        limit=1,
+                    )
 
-                        last_attendance = self.env["hr.attendance"].search(
-                            [("employee_id", "=", employee.id)],
-                            order="check_in desc",
-                            limit=1,
-                        )
-
-                        if same_day_attendance and not same_day_attendance.check_out:
-                            if inferred_status and pass_time > same_day_attendance.check_in:
-                                same_day_attendance.sudo().write({"check_out": pass_time})
+                    if last_attendance and not last_attendance.check_out:
+                        if pass_time > last_attendance.check_in:
+                            try:
+                                last_attendance.sudo().write({"check_out": pass_time})
                                 chunk_updated += 1
-                                continue
+                            except Exception as e:
+                                _logger.warning(f"Omitido por conflicto al cerrar turno: {e}")
+                                chunk_skipped += 1
+                        else:
                             chunk_skipped += 1
-                            continue
 
-                        if same_day_attendance and same_day_attendance.check_out:
-                            if pass_time > same_day_attendance.check_out:
-                                self.env["hr.attendance"].sudo().create({
-                                    "employee_id": employee.id,
-                                    "check_in": pass_time,
-                                })
-                                chunk_created += 1
-                                continue
-                            else:
-                                chunk_skipped += 1
-                                continue
-
-                        user_tz = self.env.user.tz or "UTC"
-                        local_tz = pytz.timezone(user_tz)
-
-                        if last_attendance and not last_attendance.check_out:
-                            checkin_date_local = last_attendance.check_in.astimezone(local_tz).date()
-                            end_of_day_local = datetime.combine(checkin_date_local, dt_time(23, 59, 59))
-                            end_of_day_local = local_tz.localize(end_of_day_local)
-                            end_of_day_utc = end_of_day_local.astimezone(pytz.UTC).replace(tzinfo=None)
-
-                            last_attendance.sudo().write({"check_out": end_of_day_utc})
-                            chunk_updated += 1
-
-                        if last_attendance and not last_attendance.check_out and pass_time > last_attendance.check_in:
-                            safe_checkout = pass_time - timedelta(seconds=1)
-                            last_attendance.sudo().write({"check_out": safe_checkout})
-                            chunk_updated += 1
-
-                        try:
-                            self.env["hr.attendance"].sudo().create({
-                                "employee_id": employee.id,
-                                "check_in": pass_time,
-                            })
-                            chunk_created += 1
-                        except Exception as e:
-                            open_att = self.env["hr.attendance"].search([
-                                ("employee_id", "=", employee.id),
-                                ("check_out", "=", False)
-                            ], order="check_in desc", limit=1)
-                            
-                            if open_att and pass_time > open_att.check_in:
-                                try:
-                                    open_att.sudo().write({"check_out": pass_time - timedelta(seconds=1)})
-                                    chunk_updated += 1
-                                    self.env["hr.attendance"].sudo().create({
-                                        "employee_id": employee.id,
-                                        "check_in": pass_time,
-                                    })
-                                    chunk_created += 1
-                                except Exception as e_inner:
-                                    _logger.warning(f"Omitido por conflicto secundario: {e_inner}")
-                                    chunk_skipped += 1
-                                    continue
-                            else:
-                                _logger.warning(f"Asistencia omitida por conflicto en Odoo: {e}")
-                                chunk_skipped += 1
-                                continue
-
-                    elif attendance_status == "checkOut":
-                        last_attendance = self.env["hr.attendance"].search([
-                            ("employee_id", "=", employee.id),
-                        ], order="check_in desc", limit=1)
-
-                        if last_attendance:
-                            if not last_attendance.check_out:
-                                if pass_time > last_attendance.check_in:
-                                    last_attendance.sudo().write({"check_out": pass_time})
-                                    chunk_updated += 1
-                                else:
-                                    chunk_skipped += 1
-                            else:
-                                chunk_skipped += 1
+                    else:
+                        if last_attendance and pass_time <= (last_attendance.check_out or last_attendance.check_in):
+                            chunk_skipped += 1
                         else:
                             try:
                                 self.env["hr.attendance"].sudo().create({
                                     "employee_id": employee.id,
                                     "check_in": pass_time,
-                                    "check_out": pass_time + timedelta(seconds=1),
                                 })
                                 chunk_created += 1
                             except Exception as e:
-                                _logger.warning(f"Omitido por conflicto en Checkout: {e}")
+                                _logger.warning(f"Omitido por conflicto al crear entrada: {e}")
                                 chunk_skipped += 1
-                                continue
 
                 created_count += chunk_created
                 updated_count += chunk_updated
                 skipped_count += chunk_skipped
-
-                # try:
-                #     self.env.cr.commit()
-                # except Exception:
-                #     self.env.cr.rollback()
-                #     continue
 
                 job = self.env.context.get('job')
                 if job:
@@ -693,12 +565,8 @@ class HikvisionDevice(models.Model):
             return f"All attendance download completed successfully. Processed {processed_count} events, Created {created_count} records, Updated {updated_count} records, Skipped {skipped_count} events"
 
         except Exception as e:
-            # try:
-            #     self.env.cr.rollback()
-            # except:
-            #     pass
             raise e
-
+        
     def fetch_employees(self):
         """Fetch employees from device and sync with Odoo."""
         for device in self:
