@@ -339,9 +339,6 @@ class HikvisionDevice(models.Model):
             job = self.env.context.get('job')
             total_events = len(events)
 
-            import logging
-            _logger = logging.getLogger(__name__)
-
             for event in events:
                 processed_count += 1
                 if job:
@@ -508,8 +505,6 @@ class HikvisionDevice(models.Model):
                 for event in chunk_events:
                     processed_count += 1
                     
-                    import logging
-                    _logger = logging.getLogger(__name__)
                     _logger.warning(f"--- EVENTO GLOBAL --- {event}")
 
                     emp_no = event.get("employeeNoString")
@@ -621,21 +616,29 @@ class HikvisionDevice(models.Model):
                                 "check_in": pass_time,
                             })
                             chunk_created += 1
-                        except ValidationError:
+                        except Exception as e:
                             open_att = self.env["hr.attendance"].search([
                                 ("employee_id", "=", employee.id),
                                 ("check_out", "=", False)
                             ], order="check_in desc", limit=1)
+                            
                             if open_att and pass_time > open_att.check_in:
-                                open_att.sudo().write({"check_out": pass_time - timedelta(seconds=1)})
-                                chunk_updated += 1
-                                self.env["hr.attendance"].sudo().create({
-                                    "employee_id": employee.id,
-                                    "check_in": pass_time,
-                                })
-                                chunk_created += 1
+                                try:
+                                    open_att.sudo().write({"check_out": pass_time - timedelta(seconds=1)})
+                                    chunk_updated += 1
+                                    self.env["hr.attendance"].sudo().create({
+                                        "employee_id": employee.id,
+                                        "check_in": pass_time,
+                                    })
+                                    chunk_created += 1
+                                except Exception as e_inner:
+                                    _logger.warning(f"Omitido por conflicto secundario: {e_inner}")
+                                    chunk_skipped += 1
+                                    continue
                             else:
-                                raise
+                                _logger.warning(f"Asistencia omitida por conflicto en Odoo: {e}")
+                                chunk_skipped += 1
+                                continue
 
                     elif attendance_status == "checkOut":
                         last_attendance = self.env["hr.attendance"].search([
@@ -652,12 +655,17 @@ class HikvisionDevice(models.Model):
                             else:
                                 chunk_skipped += 1
                         else:
-                            self.env["hr.attendance"].sudo().create({
-                                "employee_id": employee.id,
-                                "check_in": pass_time,
-                                "check_out": pass_time + timedelta(seconds=1),
-                            })
-                            chunk_created += 1
+                            try:
+                                self.env["hr.attendance"].sudo().create({
+                                    "employee_id": employee.id,
+                                    "check_in": pass_time,
+                                    "check_out": pass_time + timedelta(seconds=1),
+                                })
+                                chunk_created += 1
+                            except Exception as e:
+                                _logger.warning(f"Omitido por conflicto en Checkout: {e}")
+                                chunk_skipped += 1
+                                continue
 
                 created_count += chunk_created
                 updated_count += chunk_updated
