@@ -1,0 +1,23 @@
+<odoo>
+    <template id="question_simple_choice_inherit_dropdown" inherit_id="survey.question_simple_choice">
+        
+        <xpath expr="//div[hasclass('o_survey_form_choice')]" position="attributes">
+            <attribute name="t-if">not question.is_dropdown</attribute>
+        </xpath>
+        
+        <xpath expr="//div[hasclass('o_survey_form_choice')][1]" position="before">
+            <div t-if="question.is_dropdown" class="mb-4">
+                <select t-att-name="question.id" class="form-select form-control">
+                    <option value="">Select an option...</option>
+                    <t t-foreach="question.suggested_answer_ids" t-as="label">
+                        <option t-att-value="label.id" 
+                                t-att-selected="label.id in answer_lines.mapped('suggested_answer_id.id') if answer_lines else False">
+                            <t t-esc="label.value"/>
+                        </option>
+                    </t>
+                </select>
+            </div>
+        </xpath>
+
+    </template>
+</odoo>
