@@ -1,0 +1,249 @@
+
+$theme-primary: #2d9f59;
+$theme-hover: darken($theme-primary, 8%);
+$theme-light: lighten($theme-primary, 45%);
+$theme-text: darken($theme-primary, 20%);
+
+.o_survey_wrap {
+    --bs-primary: #{$theme-primary};
+    --o-color-primary: #{$theme-primary};
+
+    background-color: #f4f7f6 !important;
+    font-family: 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+    .o_survey_form {
+        background: #ffffff;
+        border-radius: 16px !important;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.06) !important;
+        padding: 40px !important;
+        margin-top: 3rem !important;
+        margin-bottom: 3rem !important;
+        border: 1px solid #eaeaea;
+
+        &::before {
+            content: "";
+            display: block;
+            width: 100%;
+            height: 150px;
+            
+            background-image: url('/logo.png'); 
+            
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+            margin-bottom: 2rem;
+        }
+    }
+
+    h3, .o_survey_question_header {
+        font-weight: 600;
+        color: #2c3e50;
+        margin-bottom: 1.5rem;
+        font-size: 1.4rem;
+    }
+
+    .form-control,
+    .form-select {
+        border-radius: 10px !important;
+        border: 2px solid #e2e8f0 !important;
+        padding: 12px 24px !important;
+        font-size: 1rem !important;
+        background-color: #ffffff !important;
+        box-shadow: none !important;
+        transition: all 0.3s ease !important;
+        min-height: 50px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+
+        &:focus {
+            border-color: $theme-primary !important;
+            background-color: #ffffff !important;
+            box-shadow: 0 0 0 4px rgba($theme-primary, 0.15) !important;
+            outline: none !important;
+        }
+    }
+
+    textarea.form-control {
+        border-radius: 10px !important;
+        min-height: 140px !important;
+        resize: vertical !important;
+        padding-top: 16px !important;
+    }
+
+    .input-group.date,
+    .o_datepicker {
+        position: relative !important;
+        display: block !important; 
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        border: none !important;
+        background: transparent !important;
+    }
+
+    .input-group.date .form-control,
+    .o_datepicker .form-control,
+    input[type="date"],
+    input[type="datetime-local"] {
+        padding-right: 45px !important; 
+    }
+
+    .input-group-text,
+    .input-group-append,
+    .o_datepicker_button {
+        position: absolute !important;
+        right: 15px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important; 
+        background: transparent !important;
+        border: none !important;
+        color: $theme-primary !important; 
+        z-index: 10 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        height: auto !important;
+    }
+
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+        position: absolute !important;
+        right: 15px !important;
+        top: 50% !important;
+        transform: translateY(-50%) !important;
+        cursor: pointer;
+        margin: 0 !important;
+        padding: 0 !important;
+        opacity: 0.6;
+    }
+
+    .o_survey_choice_btn,
+    label.bg-light {
+        border-radius: 12px !important;
+        border: 2px solid #e2e8f0 !important;
+        color: #4b5563 !important;
+        padding: 15px 20px !important;
+        margin-bottom: 12px !important;
+        background-color: #ffffff !important;
+        transition: all 0.2s ease !important;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+
+        &:hover {
+            border-color: $theme-primary !important;
+            background-color: #f8fafc !important;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        }
+
+        &.active, &:has(input:checked) {
+            border-color: $theme-primary !important;
+            background-color: $theme-light !important;
+            color: $theme-text !important;
+            box-shadow: 0 4px 12px rgba($theme-primary, 0.1) !important;
+            
+            i.fa {
+                color: $theme-primary !important;
+            }
+        }
+
+        i.fa {
+            color: #cbd5e1 !important;
+            transition: color 0.2s ease !important;
+        }
+    }
+
+    .btn-primary {
+        background-color: $theme-primary !important;
+        border: none !important;
+        border-radius: 8px !important;
+        padding: 12px 28px !important;
+        font-weight: 600 !important;
+        transition: all 0.3s ease !important;
+
+        &:hover {
+            background-color: $theme-hover !important;
+            box-shadow: 0 6px 15px rgba($theme-primary, 0.3) !important;
+            transform: translateY(-1px);
+        }
+    }
+
+    .btn-secondary {
+        border-radius: 8px !important;
+        border: 2px solid #e2e8f0 !important;
+        background-color: transparent !important;
+        color: #64748b !important;
+        padding: 10px 24px !important;
+        font-weight: 600 !important;
+
+        &:hover {
+            background-color: #f1f5f9 !important;
+            color: #334155 !important;
+        }
+    }
+
+    .o_survey_progress {
+        border-radius: 20px !important;
+        height: 10px !important;
+        background-color: #e2e8f0 !important;
+        
+        .progress-bar {
+            border-radius: 20px !important;
+            background-color: $theme-primary !important;
+        }
+    }
+
+    .table-responsive {
+        border-radius: 12px !important;
+        overflow: hidden !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.02) !important;
+    }
+
+    .table thead th,
+    .table tbody th,
+    .table .bg-primary, 
+    .table .text-bg-primary {
+        background-color: $theme-primary !important;
+        color: #ffffff !important;
+        border: none !important;
+        font-weight: 600 !important;
+        vertical-align: middle !important;
+    }
+
+    .table tbody td,
+    .table .bg-primary-light,
+    .table .bg-primary-subtle {
+        background-color: #f8fafc !important;
+        border: 1px solid #e2e8f0 !important;
+        vertical-align: middle !important;
+        transition: background-color 0.2s ease !important;
+    }
+
+    .table tbody td i.fa {
+        color: #cbd5e1 !important;
+        transition: color 0.2s ease !important;
+    }
+
+    .table tbody td:hover {
+        background-color: $theme-light !important;
+        cursor: pointer !important;
+        
+        i.fa {
+            color: $theme-primary !important;
+        }
+    }
+
+    .table tbody td.active,
+    .table tbody td.o_survey_selected,
+    .table tbody td:has(input:checked) {
+        background-color: darken($theme-light, 2%) !important;
+        
+        i.fa {
+            color: $theme-primary !important;
+        }
+    }
+}

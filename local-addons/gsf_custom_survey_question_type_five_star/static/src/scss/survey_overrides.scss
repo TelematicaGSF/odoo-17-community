@@ -1,0 +1,36 @@
+.o_survey_wrap {
+    .row:has(> .rate_widget) {
+        margin-top: -1.5rem !important; 
+    }
+
+    .rate_widget {
+        display: flex !important;
+        flex-direction: row-reverse !important; 
+        justify-content: center !important;     
+        align-items: center !important;
+        width: 100% !important;
+        padding: 0 0 20px 0 !important; 
+        margin-top: 0 !important;
+        height: auto !important;
+
+        label {
+            float: none !important;
+            width: auto !important;
+            font-size: 45px !important;
+            color: #cbd5e1 !important;
+            margin: 0 10px !important;
+            transition: all 0.2s ease !important;
+
+            &:hover {
+                transform: scale(1.15) !important;
+            }
+        }
+
+        > label:hover,
+        > label:hover ~ label,
+        .checked {
+            color: var(--bs-primary) !important; 
+            text-shadow: 0 4px 15px rgba(var(--bs-primary-rgb), 0.3) !important; 
+        }
+    }
+}
