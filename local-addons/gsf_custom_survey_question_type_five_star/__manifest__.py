@@ -1,6 +1,6 @@
 {
     "name": "GSF - Personalizaciones a Preguntas tipo 5 Estrellas en Encuestas",
-    "version": "17.0.1.0.0",
+    "version": "17.0.1.0.1",
     "author": "Grupo San Francisco, Gerencia de Telemática",
     "depends": [
         "gsf_custom_survey",
